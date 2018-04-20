@@ -1,0 +1,164 @@
+#!/bin/sh
+
+OVPNCFG=/etc/openvpn
+RSADIR=/etc/openvpn/easy-rsa
+IPV6PFX=fda5:e1a5:a801
+
+if [ $# -ne 4 ]; then
+    echo "Usage: $0 VPNID FQDN NETNUM PORT" 1>&2
+    exit 1
+fi
+
+VPNID=$1
+shift
+FQDN=$1
+shift
+NETNUM=$1
+shift
+PORT=$1
+
+if [ ${NETNUM} -lt 0 -o ${NETNUM} -gt 255 ]; then
+    echo "NETNUM can only be an integer 0..255" 1>&2
+    exit 1
+fi
+
+
+GWADDR=172.16.${NETNUM}.1
+NETMASK=255.255.255.0
+POOLSTART=172.16.${NETNUM}.50
+POOLEND=172.16.${NETNUM}.100
+TAPIF=tap${PORT}
+
+for v in VPNID FQDN NETNUM PORT GWADDR NETMASK POOLSTART POOLEND; do
+    echo $v = `eval 'echo ${'$v'}'`
+done
+
+SERVER=${FQDN}
+CLIENT=vpn${VPNID}.${FQDN}
+
+SRV_CRT=${RSADIR}/keys/${SERVER}.crt
+SRV_KEY=${RSADIR}/keys/${SERVER}.key
+
+if [ ! -e ${SRV_CRT} ]; then
+    cd ${RSADIR}
+    . ./vars
+    ./pkitool --server ${SERVER}
+    echo Created a server certificate in ${SRV_CRT}
+else
+    echo Server certificate already exists in ${SRV_CRT}
+fi
+
+if [ ! -f $SRV_CRT ]; then
+  echo "no such file: $SRV_CRT" 1>&2
+  exit
+fi
+
+if [ ! -f $SRV_KEY ]; then
+  echo "no such file: $SRV_KEY" 1>&2
+  exit
+fi
+
+
+CL_CRT=${RSADIR}/keys/${CLIENT}.crt
+CL_KEY=${RSADIR}/keys/${CLIENT}.key
+
+if [ ! -e ${CL_CRT} ]; then
+    cd ${RSADIR}
+    . ./vars
+    ./pkitool ${CLIENT}
+    echo Created a client certificate in ${CL_CRT}
+else
+    echo Client certificate already exists in ${CL_CRT}
+fi
+
+if [ ! -f $CL_CRT ]; then
+  echo "no such file: $CL_CRT" 1>&2
+  exit
+fi
+
+if [ ! -f $CL_KEY ]; then
+  echo "no such file: $CL_KEY" 1>&2
+  exit
+fi
+
+
+CONF=${OVPNCFG}/${VPNID}_${SERVER}.conf
+
+cat >${CONF} <<EOF
+port ${PORT}
+proto udp
+fragment 1400
+dev ${TAPIF}
+mode server
+tls-server
+verify-x509-name ${CLIENT} name
+ifconfig ${GWADDR} ${NETMASK}
+ifconfig-ipv6 ${IPV6PFX}:${NETNUM}::1/64 ${IPV6PFX}:${NETNUM}::2
+ca      ${RSADIR}/keys/ca.crt
+cert    ${SRV_CRT}
+key     ${SRV_KEY}
+dh      ${RSADIR}/keys/dh2048.pem
+keepalive 10 60
+persist-key
+persist-tun
+status /var/log/openvpn_${VPNID}_${SERVER}.status.log
+verb 3
+EOF
+
+systemctl reenable openvpn
+
+echo Wrote OpenVPN server configuration to ${CONF}
+
+CLIENTCONFIGS=${OVPNCFG}/client_configs
+
+if [ ! -d ${CLIENTCONFIGS} ]; then
+    mkdir ${CLIENTCONFIGS} || exit 1
+    echo Created directory ${CLIENTCONFIGS}
+fi
+
+
+CONF=${CLIENTCONFIGS}/${CLIENT}.conf
+
+cat >$CONF <<EOF
+client
+dev tap
+proto udp
+fragment 1400
+remote ${SERVER} ${PORT}
+nobind
+script-security 2
+up /etc/openvpn/addtobridge_br1
+persist-key
+persist-tun
+verb 3
+EOF
+
+echo "<ca>" >> $CONF
+cat ${RSADIR}/keys/ca.crt | \
+  grep -A 100 "BEGIN CERTIFICATE" | \
+  grep -B 100 "END CERTIFICATE" >> $CONF
+echo "</ca>" >> $CONF
+
+echo "<cert>" >> $CONF
+cat $CL_CRT | \
+  grep -A 100 "BEGIN CERTIFICATE" | \
+  grep -B 100 "END CERTIFICATE" >> $CONF
+echo "</cert>" >> $CONF
+echo "<key>" >> $CONF
+cat $CL_KEY | \
+  grep -A 100 "BEGIN PRIVATE KEY" | \
+  grep -B 100 "END PRIVATE KEY" >> $CONF
+echo "</key>" >> $CONF
+
+echo Wrote OpenVPN client configuration to ${CONF}
+
+cat >/etc/dnsmasq.d/${TAPIF} <<EOT
+dhcp-range=::,constructor:${TAPIF},ra-stateless,slaac,1h
+dhcp-range=${POOLSTART},${POOLEND},1h
+EOT
+
+# this will automatically restart dnsmasq too
+systemctl restart openvpn
+
+echo Updated dnsmasq configuration and restarted OpenVPN service
+echo Finished.
