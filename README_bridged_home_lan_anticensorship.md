@@ -64,7 +64,7 @@ net.ipv6.conf.all.forwarding=1
 EOT
 
 # find our Internet facing interface
-OUTDEV=`ip route | egrep '^default' | awk '{print $5}'`
+OUTDEV=`ip route | awk '/^default/{print $5}'`
 
 # Firewall rules for IPv4 and IPv6:
 #  masquerading sets the VPS public address as source for all outbound packets
@@ -91,7 +91,7 @@ reboot
 ```
 # here we login again
 
-OUTDEV=`ip route | egrep '^default' | awk '{print $5}'`
+OUTDEV=`ip route | awk '/^default/{print $5}'`
 
 # dnsmasq is serving as DHCP and IPv6 configuration server
 # we don't want to provide this service on our public interface
@@ -117,6 +117,7 @@ mkdir easy-rsa
 cp -R /usr/share/easy-rsa/* easy-rsa/
 cd easy-rsa/
 ln -s openssl-1.0.0.cnf openssl.cnf
+# You may want to edit the "vars" file and set the certificate attributes
 . ./vars  
 ./clean-all
 ./build-ca
@@ -156,6 +157,8 @@ This command will create server and client OpenVPN configurations, and
 update dnsmasq to serve as DHCP server for the new home LAN. The client
 configuration will need to be copied to the home gateway Linux machine.
 
+Keep in mind that the script restarts all OpenVPN daemons, so all
+connections will be interrupted for about a minute.
 
 
 ## Client gateway setup
