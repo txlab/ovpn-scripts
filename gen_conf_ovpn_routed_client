@@ -1,0 +1,95 @@
+#!/bin/sh
+
+CLIENT=$1
+if [ x${CLIENT} = x ]; then
+  echo "missing client name" 1>&2
+  exit 1
+fi
+
+OVPNCFG=/etc/openvpn
+RSADIR=/etc/openvpn/easy-rsa
+CLIENTCONFIGS=${OVPNCFG}/client_configs
+SCRIPTPARAMS=${OVPNCFG}/ovpn_routed_params
+
+if [ ! -r ${SCRIPTPARAMS} ]; then
+    echo No such file or directory: ${SCRIPTPARAMS} 1>&2
+    exit 1
+fi
+
+. ${SCRIPTPARAMS}
+
+if [ x${SERVER_FQDN} = x ]; then
+  echo "missing SERVER_FQDN" 1>&2
+  exit 1
+fi
+
+if [ x${SERVER_PORT} = x ]; then
+  echo "missing SERVER_PORT" 1>&2
+  exit 1
+fi
+
+
+CL_CRT=${RSADIR}/keys/${CLIENT}.crt
+CL_KEY=${RSADIR}/keys/${CLIENT}.key
+
+if [ ! -e ${CL_CRT} ]; then
+    cd ${RSADIR}
+    . ./vars
+    ./pkitool ${CLIENT}
+    echo Created a client certificate in ${CL_CRT}
+else
+    echo Client certificate already exists in ${CL_CRT}
+fi
+
+if [ ! -f $CL_CRT ]; then
+  echo "no such file: $CL_CRT" 1>&2
+  exit
+fi
+
+if [ ! -f $CL_KEY ]; then
+  echo "no such file: $CL_KEY" 1>&2
+  exit
+fi
+
+
+
+if [ ! -d ${CLIENTCONFIGS} ]; then
+    mkdir ${CLIENTCONFIGS} || exit 1
+    echo Created directory ${CLIENTCONFIGS}
+fi
+
+
+CONF=${CLIENTCONFIGS}/${CLIENT}.conf
+
+cat > $CONF <<EOF
+client
+dev tun
+proto udp
+fragment 1300
+mssfix
+remote ${SERVER_FQDN} ${SERVER_PORT}
+nobind
+persist-key
+persist-tun
+verb 3
+EOF
+
+echo "<ca>" >> $CONF
+cat /etc/openvpn/easy-rsa/keys/ca.crt | \
+  grep -A 100 "BEGIN CERTIFICATE" | \
+  grep -B 100 "END CERTIFICATE" >> $CONF
+echo "</ca>" >> $CONF
+
+echo "<cert>" >> $CONF
+cat $CL_CRT | \
+  grep -A 100 "BEGIN CERTIFICATE" | \
+  grep -B 100 "END CERTIFICATE" >> $CONF
+echo "</cert>" >> $CONF
+echo "<key>" >> $CONF
+cat $CL_KEY | \
+  grep -A 100 "BEGIN PRIVATE KEY" | \
+  grep -B 100 "END PRIVATE KEY" >> $CONF
+echo "</key>" >> $CONF
+
+echo Wrote OpenVPN client configuration to ${CONF}
+echo Finished.

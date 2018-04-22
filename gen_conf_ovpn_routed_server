@@ -1,0 +1,79 @@
+#!/bin/sh
+
+OVPNCFG=/etc/openvpn
+RSADIR=/etc/openvpn/easy-rsa
+SCRIPTPARAMS=${OVPNCFG}/ovpn_routed_params
+CCD=${OVPNCFG}/ccd
+
+if [ ! -r ${SCRIPTPARAMS} ]; then
+    echo No such file or directory: ${SCRIPTPARAMS} 1>&2
+    exit 1
+fi
+
+. ${SCRIPTPARAMS}
+
+for v in SERVER_FQDN SERVER_PORT SERVER_IPNET SERVER_IPMASK; do
+    if [ x`eval 'echo ${'$v'}'` = x ]; then
+        echo missing ${v} 1>&2
+        exit 1
+    fi
+done
+
+if [ ! -d ${CCD} ]; then
+    mkdir ${CCD} || exit 1
+    echo Created directory ${CCD}
+fi
+
+
+SRV_CRT=${RSADIR}/keys/${SERVER_FQDN}.crt
+SRV_KEY=${RSADIR}/keys/${SERVER_FQDN}.key
+
+if [ ! -e ${SRV_CRT} ]; then
+    cd ${RSADIR}
+    . ./vars
+    ./pkitool --server ${SERVER_FQDN}
+    echo Created a server certificate in ${SRV_CRT}
+else
+    echo Server certificate already exists in ${SRV_CRT}
+fi
+
+if [ ! -f $SRV_CRT ]; then
+  echo "no such file: $SRV_CRT" 1>&2
+  exit
+fi
+
+if [ ! -f $SRV_KEY ]; then
+  echo "no such file: $SRV_KEY" 1>&2
+  exit
+fi
+
+CONF=${OVPNCFG}/${SERVER_FQDN}.conf
+
+cat >${CONF} <<EOF
+port ${SERVER_PORT}
+fragment 1400
+proto udp
+mssfix 
+dev tun
+keepalive 10 60
+persist-key
+persist-tun
+ca      ${RSADIR}/keys/ca.crt
+cert    ${SRV_CRT}
+key     ${SRV_KEY}
+dh      ${RSADIR}/keys/dh2048.pem
+topology subnet
+server ${SERVER_IPNET} ${SERVER_IPMASK}
+client-to-client
+client-config-dir ${OVPNCFG}/ccd
+ifconfig-pool-persist /var/lib/openvpn_${SERVER_FQDN}_ipp.txt
+status /var/log/openvpn_${SERVER_FQDN}_status.log
+verb 3
+EOF
+
+systemctl reenable openvpn
+echo Wrote OpenVPN server configuration to ${CONF}
+
+systemctl restart openvpn
+echo Restarted OpenVPN service
+echo Finished.
