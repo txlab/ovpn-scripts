@@ -54,7 +54,7 @@ and Ubuntu), and will probably require small adaptations for other OSes.
 
 ```
 # install required software packages
-apt-get upgrade && apt-get install -y iptables-persistent \
+apt-get update && apt-get install -y iptables-persistent \
 openvpn easy-rsa bridge-utils git dnsmasq
 
 # enable IP routing
