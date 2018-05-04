@@ -193,6 +193,7 @@ mtu=$2
 brctl addif br1 $dev
 ip link set $dev up promisc on mtu $mtu
 EOT
+chmod u+x /etc/openvpn/addtobridge_br1
 
 # Now copy the OpenVPN client configuration to /etc/openvpn/
 scp root@vpn0001.crabdance.com:/etc/openvpn/client_configs/vpn0001.vpn0001.crabdance.com.conf /etc/openvpn/
